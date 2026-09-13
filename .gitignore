@@ -1,9 +1,13 @@
+# SDK
 /sdk/*
 !/sdk/source.txt
-
 sdk.zip
 
-
-# Added by cargo
-
+# Cargo
 /target
+
+# JAKA-CLI
+/build
+
+# Temp
+__*

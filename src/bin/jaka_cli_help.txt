@@ -1,0 +1,108 @@
+jaka-cli - JAKA robotic arm driver
+
+Usage:
+  jaka-cli [options] <command>
+
+Commands:
+  status      Read robot state: estop, power, enable, joint angles
+  power-on    Power on and enable the robot to hold position
+  power-off   Disable servos and power off
+  estop-clear Clear the e-stop error state, release the physical button first
+  inspect     Print the joint angles in degrees as JSON to stdout
+  inspect-pos Print the TCP position relative to the base as JSON to stdout
+  dh          Print the DH parameters as JSON to stdout
+  rot         Power on, enable, then rotate the specified joint
+  restore     Restore the joint angles recorded by inspect from a JSON file
+  move-to     Move the TCP to an absolute position, or with --rel to base plus an offset
+  arc         Move the TCP along a rising arc to a point, for carrying a load over the table
+  set-base    Save the current TCP position as the base pose for move-to --rel
+  serve       Serve a TCP control protocol for a gamepad
+  io-state    Print every tool and cabinet digital input and output as JSON
+  di          Read one digital input of the tool or the cabinet
+  do          Set one digital output of the tool or the cabinet and read it back
+  tio-vout    Show or set the tool IO supply voltage, 24 V or 12 V
+
+Options:
+  --ip <IP>       Controller IP address, defaults to 10.5.5.100
+  --dry-run       Print the plan without connecting
+  -h, --help      Show this help
+
+serve protocol:
+  Every command is one line, the reply is ok, err <message> or status <json>
+  vel <dx> <dy> <dz> <drx> <dry> <drz>
+                      Continuous velocity, translations in mm/s, rotations
+                      in deg/s. Zero stops the axis, the smooth gamepad mode
+  do <tool|cabinet> <index> <on|off>
+                      Drive one digital output of the tool or the cabinet
+  estop-clear         Clear the e-stop error state
+  poweron             Power on and enable the robot
+  poweroff            Disable servos and power off
+  reset               Restore the built-in default pose
+  status              Report estop, power, enable, joints and head position
+
+serve arguments:
+  --port <port>   TCP port to listen on, defaults to 5533
+  --mock          Run without a controller, print the commands and reply
+                  with a simulated state for testing the client side
+
+rot arguments:
+  --joint <1-6>   Joint to rotate, from 1 to 6, defaults to 6
+  --deg <deg>     Rotation angle in degrees, negative reverses direction, defaults to 360
+  --speed <rad/s> Joint speed in radians per second, defaults to 0.8
+
+arc arguments:
+  <X> <Y> <Z>      Endpoint in mm, the arc ends exactly on it
+  --rel            Treat X Y Z as offsets from the base pose
+  --apex <mm>      Rise of the arc peak above the straight line, defaults to 60
+  --speed <mm/s>   Linear speed, defaults to 100
+
+The arc rises to the apex and back in a smooth sampled curve, so a carried
+load clears the table on the way. Use it to move a grabbed block from above
+one spot to above another instead of a low straight drag.
+
+IO:
+  The tool IO bank lives on the robot wrist, the cabinet bank on the
+  control cabinet. Digital outputs can drive a valve or a lamp, digital
+  inputs read a sensor. The tool IO supply must match the tool voltage.
+  The Mini TIO defaults to NPN outputs: a PNP tool needs the DO pins
+  reconfigured while the servos are disabled, see scripts/init-tio-pnp.sh
+  jaka-cli di tool 0
+  jaka-cli do tool 0 on
+  jaka-cli do cabinet 3 off
+  jaka-cli tio-vout          # query
+  jaka-cli tio-vout 24       # supply the tool with 24 V
+  jaka-cli tio-vout 12
+  jaka-cli tio-vout off
+  jaka-cli tio-pin do pnp    # DO1+DO2 to PNP, run while disabled
+  jaka-cli tio-pin di pnp     # DI to PNP inputs, run while disabled
+  jaka-cli tio-pin do         # query the current DO pin mode
+
+Log level:
+  Controlled by the RUST_LOG environment variable, defaults to info
+  RUST_LOG=debug jaka-cli status
+  RUST_LOG=error jaka-cli rot
+
+Ctrl+C:
+  Aborts any ongoing motion instead of killing the process. The robot stops
+  and the command exits cleanly. The robot stays powered and enabled after an abort.
+
+Examples:
+  jaka-cli status
+  jaka-cli power-on
+  jaka-cli rot --joint 1 --deg -360
+  jaka-cli rot --speed 3.14
+  jaka-cli inspect > pose.json
+  jaka-cli restore pose.json
+  jaka-cli restore
+  jaka-cli set-base
+  jaka-cli move-to 100 0 0
+  jaka-cli move-to 100 0 0 --rx 90
+  jaka-cli move-to -50 0 400 --rel
+  jaka-cli arc 360 -200 -110 --rel --apex 80   # carry a block in an arc over the table
+  jaka-cli inspect-pos > desk.json
+  jaka-cli move-to --pose desk.json
+  jaka-cli move-to --json '{"head_pos":[100,0,300],"head_rpy":[0,90,0]}'
+  jaka-cli io-state
+  jaka-cli do tool 0 on
+  jaka-cli tio-vout 24
+  jaka-cli --dry-run rot --joint 3

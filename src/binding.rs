@@ -9,7 +9,7 @@
 //! The shared library is linked by build.rs from
 //! sdk/Linux/c&c++/x86_64-linux-gnu/shared/libjakaAPI.so.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::{c_char, c_uint, c_void};
 
 /// Robot control handle (jktypes.h: JKHD)
 pub type JKHD = i32;
@@ -34,6 +34,38 @@ impl JointValue {
     }
 }
 
+/// Cartesian translation in mm (jktypes.h: CartesianTran)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CartesianTran {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+/// Cartesian orientation as RPY in radians (jktypes.h: Rpy)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Rpy {
+    pub rx: f64,
+    pub ry: f64,
+    pub rz: f64,
+}
+
+/// Cartesian pose, translation in mm and orientation in radians (jktypes.h: CartesianPose)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CartesianPose {
+    pub tran: CartesianTran,
+    pub rpy: Rpy,
+}
+
+impl CartesianPose {
+    pub fn zero() -> Self {
+        Self::default()
+    }
+}
+
 /// Simplified robot state (jktypes.h: RobotState)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -43,14 +75,71 @@ pub struct RobotState {
     pub servo_enabled: BOOL,
 }
 
+/// Controller error state (jktypes.h: RobotStatus_simple)
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RobotStatusSimple {
+    /// 0 when normal, otherwise the controller error code
+    pub errcode: i32,
+    /// Controller error message
+    pub errmsg: [c_char; 200],
+    pub powered_on: i32,
+    pub enabled: i32,
+}
+
+impl Default for RobotStatusSimple {
+    fn default() -> Self {
+        Self {
+            errcode: 0,
+            errmsg: [0; 200],
+            powered_on: 0,
+            enabled: 0,
+        }
+    }
+}
+
+/// DH parameters (jktypes.h: DHParam)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DHParam {
+    pub alpha: [f64; 6],
+    pub a: [f64; 6],
+    pub d: [f64; 6],
+    pub joint_homeoff: [f64; 6],
+}
+
 /// Motion mode (jktypes.h: MoveMode)
 #[repr(i32)]
-#[allow(dead_code)] // Abs/Continue are not used yet but kept to mirror the header
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Continue is only used by the kept single-axis jog API
 pub enum MoveMode {
     Abs = 0,
     Incr = 1,
     Continue = 2,
+}
+
+/// Coordinate system (jktypes.h: CoordType)
+#[repr(i32)]
+#[allow(dead_code)] // Joint/Tool are not used yet but kept to mirror the header
+#[derive(Clone, Copy, Debug)]
+pub enum CoordType {
+    Base = 0,
+    Joint = 1,
+    Tool = 2,
+}
+
+/// IO bank (jktypes.h: IOType)
+#[repr(i32)]
+#[allow(dead_code)] // Extend/Relay/slaves are not used yet but kept to mirror the header
+#[derive(Clone, Copy, Debug)]
+pub enum IOType {
+    Cabinet = 0,
+    Tool = 1,
+    Extend = 2,
+    Relay = 3,
+    ModbusSlave = 4,
+    ProfinetSlave = 5,
+    EipSlave = 6,
 }
 
 /// Optional motion parameters, always null in this project (jktypes.h: OptionalCond)
@@ -62,19 +151,89 @@ pub struct OptionalCond {
 #[link(name = "jakaAPI")]
 unsafe extern "C" {
     /// Create a connection handle
+    #[link_name = "jk_safe_create_handler"]
     pub fn create_handler(ip: *const c_char, handle: *mut JKHD) -> errno_t;
     /// Destroy the handle and disconnect. The SDK header spells it "destory"
+    #[link_name = "jk_safe_destory_handler"]
     pub fn destory_handler(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_power_on"]
     pub fn power_on(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_power_off"]
     pub fn power_off(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_enable_robot"]
     pub fn enable_robot(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_disable_robot"]
     pub fn disable_robot(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_get_robot_state"]
     pub fn get_robot_state(handle: *const JKHD, state: *mut RobotState) -> errno_t;
+    /// Read the controller error state and message
+    #[link_name = "jk_safe_get_robot_status_simple"]
+    pub fn get_robot_status_simple(handle: *const JKHD, status: *mut RobotStatusSimple) -> errno_t;
+    /// Set one digital output of an IO bank
+    #[link_name = "jk_safe_set_digital_output"]
+    pub fn set_digital_output(
+        handle: *const JKHD,
+        io_type: IOType,
+        index: i32,
+        value: BOOL,
+    ) -> errno_t;
+    /// Read one digital output of an IO bank
+    #[link_name = "jk_safe_get_digital_output"]
+    pub fn get_digital_output(
+        handle: *const JKHD,
+        io_type: IOType,
+        index: i32,
+        value: *mut BOOL,
+    ) -> errno_t;
+    /// Read one digital input of an IO bank
+    #[link_name = "jk_safe_get_digital_input"]
+    pub fn get_digital_input(
+        handle: *const JKHD,
+        io_type: IOType,
+        index: i32,
+        value: *mut BOOL,
+    ) -> errno_t;
+    /// Set the tool IO supply: enable 0/1 and voltage 0 = 24 V, 1 = 12 V
+    #[link_name = "jk_safe_set_tio_vout_param"]
+    pub fn set_tio_vout_param(handle: *const JKHD, vout_enable: i32, vout_vol: i32) -> errno_t;
+    /// Read the tool IO supply configuration
+    #[link_name = "jk_safe_get_tio_vout_param"]
+    pub fn get_tio_vout_param(
+        handle: *const JKHD,
+        vout_enable: *mut i32,
+        vout_vol: *mut i32,
+    ) -> errno_t;
+    /// Read the TIO pin mode: 0 = DI pins, 1 = DO pins, 2 = AI pins
+    #[link_name = "jk_safe_get_tio_pin_mode"]
+    pub fn get_tio_pin_mode(handle: *const JKHD, pin_type: i32, pin_mode: *mut i32) -> errno_t;
+    /// Set the TIO pin mode: 0 = DI pins, 1 = DO pins, 2 = AI pins
+    #[link_name = "jk_safe_set_tio_pin_mode"]
+    pub fn set_tio_pin_mode(handle: *const JKHD, pin_type: i32, pin_mode: i32) -> errno_t;
+    /// Read the RS485 channel mode: 0 = RS485H, 1 = RS485L
+    #[link_name = "jk_safe_get_rs485_chn_mode"]
+    pub fn get_rs485_chn_mode(handle: *const JKHD, chn_id: i32, chn_mode: *mut i32) -> errno_t;
+    #[link_name = "jk_safe_get_dh_param"]
+    pub fn get_dh_param(handle: *const JKHD, dh_param: *mut DHParam) -> errno_t;
+    #[link_name = "jk_safe_get_joint_position"]
     pub fn get_joint_position(handle: *const JKHD, pos: *mut JointValue) -> errno_t;
-    pub fn is_in_estop(handle: *const JKHD, in_estop: *mut BOOL) -> errno_t;
-    pub fn clear_error(handle: *const JKHD) -> errno_t;
-    /// Stop all ongoing movements of the cobot
-    pub fn motion_abort(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_get_tcp_position"]
+    pub fn get_tcp_position(handle: *const JKHD, tcp_position: *mut CartesianPose) -> errno_t;
+    /// Inverse kinematics with a reference joint pose to disambiguate solutions
+    #[link_name = "jk_safe_kine_inverse"]
+    pub fn kine_inverse(
+        handle: *const JKHD,
+        ref_pos: *const JointValue,
+        cartesian_pose: *const CartesianPose,
+        joint_pos: *mut JointValue,
+    ) -> errno_t;
+    /// Forward kinematics
+    #[link_name = "jk_safe_kine_forward"]
+    pub fn kine_forward(
+        handle: *const JKHD,
+        joint_pos: *const JointValue,
+        cartesian_pose: *mut CartesianPose,
+    ) -> errno_t;
+    #[link_name = "jk_safe_joint_move_extend"]
     pub fn joint_move_extend(
         handle: *const JKHD,
         joint_pos: *const JointValue,
@@ -85,6 +244,68 @@ unsafe extern "C" {
         tol: f64,
         option_cond: *const OptionalCond,
     ) -> errno_t;
+    #[link_name = "jk_safe_linear_move_extend"]
+    pub fn linear_move_extend(
+        handle: *const JKHD,
+        end_pos: *const CartesianPose,
+        move_mode: MoveMode,
+        is_block: BOOL,
+        speed: f64,
+        acc: f64,
+        tol: f64,
+        option_cond: *const OptionalCond,
+    ) -> errno_t;
+    /// Stop all ongoing movements of the cobot
+    #[link_name = "jk_safe_motion_abort"]
+    pub fn motion_abort(handle: *const JKHD) -> errno_t;
+    /// Continuous velocity control of one axis. Kept because a jog call
+    /// preempts the previous motion, so the serve protocol uses servo mode
+    /// instead and this API is no longer called
+    #[allow(dead_code)]
+    #[link_name = "jk_safe_jog"]
+    pub fn jog(
+        handle: *const JKHD,
+        aj_num: i32,
+        move_mode: MoveMode,
+        coord_type: CoordType,
+        vel_cmd: f64,
+        pos_cmd: f64,
+    ) -> errno_t;
+    /// Stop the ongoing jog movement of one axis
+    #[allow(dead_code)]
+    #[link_name = "jk_safe_jog_stop"]
+    pub fn jog_stop(handle: *const JKHD, num: i32) -> errno_t;
+    /// Enter or leave servo mode, the smooth multi-axis control mode
+    #[link_name = "jk_safe_servo_move_enable"]
+    pub fn servo_move_enable(handle: *const JKHD, enable: BOOL) -> errno_t;
+    /// One servo interpolation cycle of Cartesian motion, the pose is an
+    /// absolute target in ABS mode or a delta in INCR mode, translations in
+    /// mm and rotations in radians. step_num times 8 ms is the cycle period
+    #[link_name = "jk_safe_servo_p"]
+    pub fn servo_p(
+        handle: *const JKHD,
+        pose: *const CartesianPose,
+        move_mode: MoveMode,
+        step_num: c_uint,
+    ) -> errno_t;
+    /// Joint-space 3rd-order non-linear filter for servo commands, limits
+    /// the joint speed, acceleration and jerk in deg/s, deg/s^2 and deg/s^3
+    #[link_name = "jk_safe_servo_move_use_joint_NLF"]
+    pub fn servo_move_use_joint_NLF(
+        handle: *const JKHD,
+        max_vr: f64,
+        max_ar: f64,
+        max_jr: f64,
+    ) -> errno_t;
+    /// Disable the filter for servo move commands, kept to fall back when
+    /// the NLF filter misbehaves on the controller
+    #[allow(dead_code)]
+    #[link_name = "jk_safe_servo_move_use_none_filter"]
+    pub fn servo_move_use_none_filter(handle: *const JKHD) -> errno_t;
+    #[link_name = "jk_safe_is_in_estop"]
+    pub fn is_in_estop(handle: *const JKHD, in_estop: *mut BOOL) -> errno_t;
+    #[link_name = "jk_safe_clear_error"]
+    pub fn clear_error(handle: *const JKHD) -> errno_t;
 }
 
 // POSIX file descriptor helpers used to keep SDK printf output off stdout
@@ -167,6 +388,7 @@ pub fn err_name(code: errno_t) -> &'static str {
         -22 => "Soft limit reached",
         -41 => "Joint move failed",
         -42 => "Circular move failed",
+        -999 => "SDK exception",
         _ => "Unknown error",
     }
 }
